@@ -24,7 +24,14 @@ jobs:
       - name: build
         run: |
             go mod tidy
+            mkdir build && cd build
             go build
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+      - name: upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.goos }}
+          path: build/*
+
