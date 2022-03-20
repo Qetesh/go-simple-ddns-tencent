@@ -25,7 +25,7 @@ jobs:
         run: |
             go mod tidy
             mkdir build && cd build
-            go build
+            go build ../
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
