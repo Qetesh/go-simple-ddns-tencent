@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 )
 
 // RecordList 定义json数据类型 参考链接：https://mholt.github.io/json-to-go/
@@ -57,15 +58,40 @@ func main() {
 	enableIPv6, _ := cfg.Section("dns").Key("enableIPv6").Bool()
 	enable, _ := cfg.Section("").Key("enable").Bool()
 
-	// 获取本机互联网IP
-	ipv4, ipv6 := GetPublicIP()
-
-	// 更新记录
 	if enable {
-		UpdateRecord(secretid, secretkey, configSubdomain, "A", ipv4, configDomain, recordListTencent(secretid, secretkey, configSubdomain, "A", configDomain))
-		if len(ipv6) > 0 && enableIPv6 {
-			UpdateRecord(secretid, secretkey, configSubdomain, "AAAA", configDomain, ipv6, recordListTencent(secretid, secretkey, configSubdomain, "AAAA", configDomain))
+		// 获取本机互联网IP
+		CurrentIPv4, CurrentIPv6 := GetPublicIP()
+		var MatchIPv4 bool
+		var MatchIPv6 bool
 
+		// 判断IP是否变更
+		ResolveIPv4, ResolveIPv6 := Resovle(configDomain, configSubdomain)
+		if CurrentIPv4 == ResolveIPv4 {
+			MatchIPv4 = true
+		} else if CurrentIPv6 == ResolveIPv6 {
+			MatchIPv6 = true
+		}
+
+		if MatchIPv4 && MatchIPv6 {
+			fmt.Println("域名未变化")
+		} else {
+			if len(ResolveIPv6) == 0 && len(CurrentIPv6) > 0 && enableIPv6 {
+				// 添加IPv4、IPv6
+				TencentCreateRecord(configDomain, configSubdomain, "AAAA", CurrentIPv6, secretid, secretkey)
+			} else if len(ResolveIPv4) == 0 {
+				// 添加IPv4
+				TencentCreateRecord(configDomain, configSubdomain, "A", CurrentIPv4, secretid, secretkey)
+			} else if (!enableIPv6 && len(ResolveIPv6) > 0) || len(CurrentIPv6) == 0 {
+				// 删除IPv6
+				TencentDelRecord(configDomain, secretid, secretkey, TencentDomainID(secretid, secretkey, configSubdomain, "AAAA", configDomain))
+			} else if !MatchIPv4 && MatchIPv6 {
+				// 更新IPv6
+				TencentUpdateRecord(secretid, secretkey, configSubdomain, "A", "ENABLE", CurrentIPv4, configDomain, TencentDomainID(secretid, secretkey, configSubdomain, "A", configDomain))
+			} else if !MatchIPv4 && !MatchIPv6 {
+				// 更新IPv4、IPv6
+				TencentUpdateRecord(secretid, secretkey, configSubdomain, "A", "ENABLE", CurrentIPv4, configDomain, TencentDomainID(secretid, secretkey, configSubdomain, "A", configDomain))
+				TencentUpdateRecord(secretid, secretkey, configSubdomain, "AAAA", "ENABLE", CurrentIPv4, configDomain, TencentDomainID(secretid, secretkey, configSubdomain, "AAAA", configDomain))
+			}
 		}
 	}
 }
@@ -91,15 +117,15 @@ func GetPublicIP() (IPv4 string, IPv6 string) {
 	} else {
 		//如果获取IPv6地址，改用IPv4访问
 		re6 := regexp.MustCompile(`(([\da-fA-F]{1,4}):{1,2}){2,8}([\da-fA-F]{1,4})`)
-		clientIP := "2408:8214:2820:3870::f6d"
 		match := re6.FindAllString(clientIP, -1)
-		IPv4 = GetPublicIP4()
+		IPv4 = GetPublicIPv4()
 		IPv6 = match[0]
 	}
+	fmt.Println("当前互联网IP：", IPv4, IPv6)
 	return
 }
 
-func GetPublicIP4() (IPv4 string) {
+func GetPublicIPv4() (IPv4 string) {
 	dialer := &net.Dialer{}
 	tr := &http.Transport{
 		//强制使用IPv4访问接口地址
@@ -127,7 +153,29 @@ func GetPublicIP4() (IPv4 string) {
 	return
 }
 
-func apiCommonTencent(secretid, secretkey string) *dnspod.Client {
+func Resovle(configdomain, configSubdomain string) (ResolveIPv4 string, ResolveIPv6 string) {
+	record, _ := net.LookupIP(configSubdomain + "." + configdomain)
+
+	for _, ip := range record {
+		//ips = append(ips, ip.String())
+		re := regexp.MustCompile(`([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)`)
+		match := re.FindAllString(ip.String(), -1)
+
+		//判断是否返回IPv4
+		if len(match) > 0 && len(match[0]) > 1 {
+			ResolveIPv4 = match[0]
+			ResolveIPv6 = ""
+		} else {
+			//获取IPv6地址
+			re6 := regexp.MustCompile(`(([\da-fA-F]{1,4}):{1,2}){2,8}([\da-fA-F]{1,4})`)
+			match := re6.FindAllString(ip.String(), -1)
+			ResolveIPv6 = match[0]
+		}
+	}
+	return ResolveIPv4, ResolveIPv6
+}
+
+func TencentApiCommon(secretid, secretkey string) *dnspod.Client {
 	credential := common.NewCredential(
 		secretid,
 		secretkey,
@@ -138,11 +186,11 @@ func apiCommonTencent(secretid, secretkey string) *dnspod.Client {
 	return client
 }
 
-func recordListTencent(secretid, secretkey, SubDomain, RecordType, configDomain string) int {
+func TencentDomainID(secretid, secretkey, SubDomain, RecordType, configDomain string) int {
 	//获取域名列表
 	requestList := dnspod.NewDescribeRecordListRequest()
 	requestList.Domain = common.StringPtr(configDomain)
-	responseList, err := apiCommonTencent(secretid, secretkey).DescribeRecordList(requestList)
+	responseList, err := TencentApiCommon(secretid, secretkey).DescribeRecordList(requestList)
 	if _, ok := err.(*errors.TencentCloudSDKError); ok {
 		fmt.Printf("An API error has returned: %s", err)
 		return 0
@@ -161,7 +209,43 @@ func recordListTencent(secretid, secretkey, SubDomain, RecordType, configDomain 
 	return recordID
 }
 
-func UpdateRecord(secretid, secretkey, SubDomain, RecordType, Value, configDomain string, RecordId int) {
+func TencentCreateRecord(configDomain, configSubdomain, RecordType, Value, secretid, secretkey string) {
+	request := dnspod.NewCreateRecordRequest()
+
+	request.Domain = common.StringPtr(configDomain)
+	request.SubDomain = common.StringPtr(configSubdomain)
+	request.RecordType = common.StringPtr(RecordType)
+	request.RecordLine = common.StringPtr("默认")
+	request.Value = common.StringPtr(Value)
+
+	response, err := TencentApiCommon(secretid, secretkey).CreateRecord(request)
+	if _, ok := err.(*errors.TencentCloudSDKError); ok {
+		fmt.Printf("An API error has returned: %s", err)
+		return
+	}
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("%s", response.ToJsonString()+"\n已添加记录："+configSubdomain+Value)
+}
+
+func TencentDelRecord(configDomain, secretid, secretkey string, RecordId int) {
+	request := dnspod.NewDeleteRecordRequest()
+	request.Domain = common.StringPtr(configDomain)
+	request.RecordId = common.Uint64Ptr(uint64(RecordId))
+
+	response, err := TencentApiCommon(secretid, secretkey).DeleteRecord(request)
+	if _, ok := err.(*errors.TencentCloudSDKError); ok {
+		fmt.Printf("An API error has returned: %s", err)
+		return
+	}
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("%s", response.ToJsonString()+"\n删除记录："+strconv.Itoa(RecordId))
+}
+
+func TencentUpdateRecord(secretid, secretkey, SubDomain, RecordType, Status, Value, configDomain string, RecordId int) {
 	//更新单个记录
 	requestRecord := dnspod.NewModifyRecordRequest()
 	requestRecord.Domain = common.StringPtr(configDomain)
@@ -171,8 +255,9 @@ func UpdateRecord(secretid, secretkey, SubDomain, RecordType, Value, configDomai
 	requestRecord.RecordLineId = common.StringPtr("0")
 	requestRecord.RecordId = common.Uint64Ptr(uint64(RecordId))
 	requestRecord.Value = common.StringPtr(Value)
+	requestRecord.Status = common.StringPtr(Status)
 
-	responseRecord, err := apiCommonTencent(secretid, secretkey).ModifyRecord(requestRecord)
+	responseRecord, err := TencentApiCommon(secretid, secretkey).ModifyRecord(requestRecord)
 	if _, ok := err.(*errors.TencentCloudSDKError); ok {
 		fmt.Printf("An API error has returned: %s", err)
 		return
@@ -180,5 +265,5 @@ func UpdateRecord(secretid, secretkey, SubDomain, RecordType, Value, configDomai
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(responseRecord.ToJsonString())
+	fmt.Println(responseRecord.ToJsonString() + "\n更新记录" + SubDomain + Value)
 }
