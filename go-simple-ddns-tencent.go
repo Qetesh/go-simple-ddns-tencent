@@ -108,7 +108,7 @@ func main() {
 				// 更新IPv4
 				TencentUpdateRecord(secretid, secretkey, configSubdomain, "A", "ENABLE", CurrentIPv4, configDomain, TencentDomainID(secretid, secretkey, configSubdomain, "A", configDomain))
 			}
-			if !MatchIPv6 && !(len(CurrentIPv6) == 0) && enableIPv6 {
+			if !MatchIPv6 && !(len(CurrentIPv6) == 0) && !(len(ResolveIPv6) == 0) && enableIPv6 {
 				// 更新IPv6
 				TencentUpdateRecord(secretid, secretkey, configSubdomain, "AAAA", "ENABLE", CurrentIPv4, configDomain, TencentDomainID(secretid, secretkey, configSubdomain, "AAAA", configDomain))
 			}
