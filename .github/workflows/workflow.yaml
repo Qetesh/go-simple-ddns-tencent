@@ -30,7 +30,7 @@ jobs:
         run: |
             go mod tidy
             mkdir build && cd build
-            go build ../
+            go build -o ddns_tencent_${{ matrix.goos }}_${{ matrix.goarch }} ../
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
