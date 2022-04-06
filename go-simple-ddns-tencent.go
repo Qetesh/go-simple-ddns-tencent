@@ -16,6 +16,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"time"
 )
 
 // RecordList 定义json数据类型 参考链接：https://mholt.github.io/json-to-go/
@@ -45,32 +46,36 @@ type RecordList struct {
 	} `json:"Response"`
 }
 
+type confList struct {
+	secretid        string
+	secretkey       string
+	configSubdomain string
+	configDomain    string
+	enableIPv6      bool
+}
+
 func init() {
 	// 初始化日志配置
-	logFile, err := os.OpenFile("./ddns.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModeAppend|os.ModePerm)
-	if err != nil {
-		log.Println("open log file failed, err:", err)
-		return
-	}
-	log.SetOutput(logFile)
+	//logFile, err := os.OpenFile("./ddns.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModeAppend|os.ModePerm)
+	//if err != nil {
+	//	log.Println("open log file failed, err:", err)
+	//	return
+	//}
+	log.SetOutput(os.Stdout)
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 }
 
 func main() {
-	// 获取配置文件
-	cfg, err := ini.Load("config.ini")
-	if err != nil {
-		log.Printf("Fail to read file: %v", err)
-		os.Exit(1)
-	}
-	secretid := cfg.Section("tencent").Key("secretid").String()
-	secretkey := cfg.Section("tencent").Key("secretkey").String()
-	configSubdomain := cfg.Section("dns").Key("subdomain").String()
-	configDomain := cfg.Section("dns").Key("domain").String()
-	enableIPv6, _ := cfg.Section("dns").Key("enableIPv6").Bool()
-	enable, _ := cfg.Section("").Key("enable").Bool()
+	// 读取配置文件
+	cfg := conf()
 
-	if enable {
+	configDomain := cfg.configDomain
+	configSubdomain := cfg.configSubdomain
+	secretid := cfg.secretid
+	secretkey := cfg.secretkey
+	enableIPv6 := cfg.enableIPv6
+
+	for {
 		// 获取本机互联网IP
 		CurrentIPv4, CurrentIPv6 := GetPublicIP()
 		log.Println("当前互联网IP：", CurrentIPv4, CurrentIPv6)
@@ -113,7 +118,36 @@ func main() {
 				TencentUpdateRecord(secretid, secretkey, configSubdomain, "AAAA", "ENABLE", CurrentIPv4, configDomain, TencentDomainID(secretid, secretkey, configSubdomain, "AAAA", configDomain))
 			}
 		}
+		time.Sleep(600 * time.Second)
 	}
+}
+
+func conf() confList {
+	var confList confList
+
+	// 获取环境变量
+	confList.secretid, _ = os.LookupEnv("secretid")
+	confList.secretkey, _ = os.LookupEnv("secretkey")
+	confList.configSubdomain, _ = os.LookupEnv("configSubdomain")
+	confList.configDomain, _ = os.LookupEnv("configDomain")
+	enableIPv6, _ := os.LookupEnv("enableIPv6")
+	confList.enableIPv6, _ = strconv.ParseBool(enableIPv6)
+	if confList.secretid != "" {
+		return confList
+	}
+
+	// 获取配置文件
+	cfg, err := ini.Load("config.ini")
+
+	if err != nil {
+		log.Printf("Fail to read file: %v", err)
+	}
+	confList.secretid = cfg.Section("tencent").Key("secretid").String()
+	confList.secretkey = cfg.Section("tencent").Key("secretkey").String()
+	confList.configSubdomain = cfg.Section("dns").Key("subdomain").String()
+	confList.configDomain = cfg.Section("dns").Key("domain").String()
+	confList.enableIPv6, _ = cfg.Section("dns").Key("enableIPv6").Bool()
+	return confList
 }
 
 func GetPublicIP() (IPv4 string, IPv6 string) {
